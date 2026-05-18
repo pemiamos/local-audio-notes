@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Notes Station</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darkBase: '#0f172a',
+                        darkPanel: '#1e293b',
+                        darkBorder: '#334155',
+                        brandAccent: '#3b82f6',
+                        brandHover: '#2563eb'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: theme('colors.darkBase'); color: #f8fafc; font-family: 'Inter', system-ui, sans-serif; }
+        .glass-panel { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid theme('colors.darkBorder'); }
+        .prose-dark { color: #cbd5e1; }
+        .prose-dark h1, .prose-dark h2, .prose-dark h3, .prose-dark strong { color: #f8fafc; }
+        .prose-dark code { background: #334155; padding: 2px 4px; border-radius: 4px; color: #93c5fd; }
+        .prose-dark pre code { background: transparent; color: inherit; }
+        .prose-dark pre { background: #0f172a; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; }
+        .prose-dark ul { list-style-type: disc; padding-left: 1.5rem; margin-bottom: 1rem; }
+        .prose-dark li { margin-bottom: 0.25rem; }
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden flex text-sm">
+
+    <!-- Sidebar -->
+    <aside class="w-64 h-full glass-panel flex flex-col p-5 space-y-6 shrink-0 z-10">
+        <div>
+            <h1 class="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                <svg class="w-5 h-5 text-brandAccent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
+                Audio Notes
+            </h1>
+            <p class="text-xs text-slate-400 mt-1">本地隐私优先 · 离线工作站</p>
+        </div>
+
+        <div class="space-y-4 flex-1">
+            <div class="space-y-2">
+                <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider">系统引擎状态</label>
+                <div class="flex items-center gap-3 bg-darkBase p-3 rounded-lg border border-darkBorder">
+                    <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                    <div class="flex flex-col">
+                        <span class="text-white font-medium">whisper.cpp</span>
+                        <span class="text-[10px] text-slate-500">Metal 加速已就绪</span>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3 bg-darkBase p-3 rounded-lg border border-darkBorder">
+                    <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                    <div class="flex flex-col">
+                        <span class="text-white font-medium">Ollama 本地大模型</span>
+                        <span class="text-[10px] text-emerald-400">已锁定: gemma4:31b</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="space-y-2 pt-4 border-t border-darkBorder">
+                <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider">处理情境预设</label>
+                <select id="presetSelect" class="w-full bg-darkBase border border-darkBorder text-white text-sm rounded-lg focus:ring-brandAccent focus:border-brandAccent block p-2.5 outline-none transition-colors">
+                    <option value="日常会议速记">日常会议速记</option>
+                    <option value="设计课程录音大纲">设计课程录音大纲</option>
+                </select>
+                <p class="text-[10px] text-slate-500 mt-1">决定 Ollama 的提示词模板与提炼焦点。</p>
+            </div>
+        </div>
+
+        <div class="text-[10px] text-slate-600 text-center">
+            Apple Silicon Optimized
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 h-full relative flex flex-col bg-[#0b1120]">
+        
+        <!-- Header -->
+        <header class="h-14 border-b border-darkBorder flex items-center justify-between px-6 shrink-0 bg-darkBase/50 backdrop-blur">
+            <div id="statusHeader" class="text-slate-300 font-medium">等待拖入音频文件...</div>
+            <button id="exportBtn" class="hidden items-center gap-2 px-4 py-1.5 bg-brandAccent hover:bg-brandHover text-white rounded-md text-sm font-medium transition-all shadow-[0_0_15px_rgba(59,130,246,0.3)]">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                导出为 .md
+            </button>
+        </header>
+
+        <!-- Drop Zone (Initial State) -->
+        <div id="dropZone" class="absolute inset-0 top-14 flex items-center justify-center p-8 z-20 bg-[#0b1120] transition-opacity duration-300">
+            <div class="w-full max-w-2xl aspect-video border-2 border-dashed border-darkBorder hover:border-brandAccent rounded-2xl flex flex-col items-center justify-center gap-4 transition-all group relative overflow-hidden bg-darkPanel/30 cursor-pointer" id="dropArea">
+                <div class="absolute inset-0 bg-brandAccent/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <input type="file" id="fileInput" class="hidden" accept=".m4a,.mp3,.wav,.ogg" />
+                <div class="w-16 h-16 rounded-full bg-darkBase border border-darkBorder flex items-center justify-center group-hover:scale-110 transition-transform shadow-lg">
+                    <svg class="w-8 h-8 text-slate-400 group-hover:text-brandAccent transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3"></path></svg>
+                </div>
+                <div class="text-center z-10">
+                    <h3 class="text-lg font-medium text-white mb-1 group-hover:text-brandAccent transition-colors">拖拽音频文件至此</h3>
+                    <p class="text-sm text-slate-400">支持 .m4a, .mp3, .wav 格式</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress View -->
+        <div id="progressView" class="hidden absolute inset-0 top-14 flex items-center justify-center p-8 z-20 bg-[#0b1120]/95 backdrop-blur-sm">
+            <div class="w-full max-w-md glass-panel p-8 rounded-2xl shadow-2xl flex flex-col items-center gap-6">
+                <div class="w-16 h-16 rounded-full border-4 border-darkBorder border-t-brandAccent animate-spin"></div>
+                <div class="text-center w-full">
+                    <h3 id="progressTitle" class="text-lg font-semibold text-white mb-2">处理中...</h3>
+                    <p id="progressDesc" class="text-sm text-slate-400 min-h-[1.25rem]">正在初始化引擎</p>
+                    <p id="estimatedTime" class="text-xs text-brandAccent mt-2 font-mono hidden">预计剩余: 计算中...</p>
+                </div>
+                
+                <!-- Steps -->
+                <div class="w-full space-y-3 mt-4">
+                    <div class="flex items-center gap-3 text-sm" id="step1">
+                        <div class="w-4 h-4 rounded-full border border-slate-600 flex items-center justify-center indicator shrink-0"></div>
+                        <span class="text-slate-400 title flex-1">音频解码与预处理</span>
+                        <span class="text-xs text-brandAccent font-mono hidden timer">00:00</span>
+                    </div>
+                    <div class="flex items-center gap-3 text-sm" id="step2">
+                        <div class="w-4 h-4 rounded-full border border-slate-600 flex items-center justify-center indicator shrink-0"></div>
+                        <span class="text-slate-400 title flex-1">Metal 加速极速转录</span>
+                        <span class="text-xs text-brandAccent font-mono hidden timer">00:00</span>
+                    </div>
+                    <div class="flex items-center gap-3 text-sm" id="step3">
+                        <div class="w-4 h-4 rounded-full border border-slate-600 flex items-center justify-center indicator shrink-0"></div>
+                        <span class="text-slate-400 title flex-1">Ollama 语义重构提炼</span>
+                        <span class="text-xs text-brandAccent font-mono hidden timer">00:00</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Split Pane View -->
+        <div id="resultView" class="hidden flex-1 flex h-[calc(100%-3.5rem)]">
+            <!-- Left Pane: Raw Text -->
+            <div class="w-1/2 h-full border-r border-darkBorder flex flex-col bg-darkBase/30">
+                <div class="px-6 py-3 border-b border-darkBorder bg-darkBase shrink-0 flex items-center justify-between">
+                    <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">原始语音识别 (Raw Text)</span>
+                    <span class="text-[10px] bg-darkPanel px-2 py-0.5 rounded text-slate-400">whisper.cpp</span>
+                </div>
+                <div class="p-6 flex-1 overflow-y-auto">
+                    <div id="rawContent" class="text-slate-300 leading-relaxed font-mono text-[13px] whitespace-pre-wrap"></div>
+                </div>
+            </div>
+
+            <!-- Right Pane: Markdown -->
+            <div class="w-1/2 h-full flex flex-col bg-[#0b1120]">
+                <div class="px-6 py-3 border-b border-darkBorder bg-darkBase shrink-0 flex items-center justify-between">
+                    <span class="text-xs font-semibold text-brandAccent uppercase tracking-wider">语义结构化笔记 (Processed)</span>
+                    <span class="text-[10px] bg-brandAccent/10 text-brandAccent px-2 py-0.5 rounded border border-brandAccent/20">Ollama (gemma4:31b)</span>
+                </div>
+                <div class="p-6 flex-1 overflow-y-auto">
+                    <div id="markdownContent" class="prose prose-dark max-w-none"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Model Setup Modal -->
+    <div id="modelSetupModal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+        <div class="glass-panel p-8 rounded-2xl max-w-md w-full shadow-2xl space-y-6">
+            <div class="text-center">
+                <div class="w-16 h-16 bg-brandAccent/10 text-brandAccent rounded-full flex items-center justify-center mx-auto mb-4 border border-brandAccent/20">
+                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                </div>
+                <h2 class="text-xl font-bold text-white">模型初始化</h2>
+                <p class="text-sm text-slate-400 mt-2">首次运行需要准备 Whisper 语音大模型 (约 3GB)。</p>
+            </div>
+            
+            <div class="space-y-3 pt-4">
+                <button id="btnDownloadModel" class="w-full flex items-center justify-center gap-2 px-4 py-3 bg-brandAccent hover:bg-brandHover text-white rounded-lg text-sm font-medium transition-colors shadow-lg">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    一键自动下载
+                </button>
+                <div class="text-center text-xs text-slate-500">或</div>
+                <button id="btnSelectModel" class="w-full flex items-center justify-center gap-2 px-4 py-3 bg-darkBase hover:bg-darkPanel border border-darkBorder text-slate-300 rounded-lg text-sm transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg>
+                    手动选择已下载的文件
+                </button>
+            </div>
+            
+            <!-- Download Progress -->
+            <div id="modelDownloadProgress" class="hidden space-y-2 mt-4 pt-4 border-t border-darkBorder">
+                <div class="flex justify-between text-xs text-slate-400">
+                    <span>下载进度</span>
+                    <span id="modelProgressText">0%</span>
+                </div>
+                <div class="w-full bg-darkBase rounded-full h-2">
+                    <div id="modelProgressBar" class="bg-brandAccent h-2 rounded-full" style="width: 0%"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const dropArea = document.getElementById('dropArea');
+        const fileInput = document.getElementById('fileInput');
+        const dropZone = document.getElementById('dropZone');
+        const progressView = document.getElementById('progressView');
+        const resultView = document.getElementById('resultView');
+        const exportBtn = document.getElementById('exportBtn');
+        const presetSelect = document.getElementById('presetSelect');
+        const statusHeader = document.getElementById('statusHeader');
+        
+        const modelSetupModal = document.getElementById('modelSetupModal');
+        const btnDownloadModel = document.getElementById('btnDownloadModel');
+        const btnSelectModel = document.getElementById('btnSelectModel');
+        const modelDownloadProgress = document.getElementById('modelDownloadProgress');
+        const modelProgressBar = document.getElementById('modelProgressBar');
+        const modelProgressText = document.getElementById('modelProgressText');
+        
+        let currentMarkdown = '';
+        let currentTimer = null;
+        let currentSeconds = 0;
+
+        const startTimer = (stepId) => {
+            if (currentTimer) clearInterval(currentTimer);
+            currentSeconds = 0;
+            const step = document.getElementById(stepId);
+            const timerSpan = step.querySelector('.timer');
+            if (timerSpan) {
+                timerSpan.classList.remove('hidden');
+                timerSpan.classList.remove('text-slate-500');
+                timerSpan.classList.add('text-brandAccent');
+                timerSpan.textContent = '00:00';
+                currentTimer = setInterval(() => {
+                    currentSeconds++;
+                    const m = Math.floor(currentSeconds / 60).toString().padStart(2, '0');
+                    const s = (currentSeconds % 60).toString().padStart(2, '0');
+                    timerSpan.textContent = `${m}:${s}`;
+                }, 1000);
+            }
+        };
+
+        const stopTimer = () => {
+            if (currentTimer) {
+                clearInterval(currentTimer);
+                currentTimer = null;
+            }
+        };
+
+        // UI Helpers
+        const setStepState = (stepId, state) => {
+            const step = document.getElementById(stepId);
+            const indicator = step.querySelector('.indicator');
+            const text = step.querySelector('.title');
+            const timerSpan = step.querySelector('.timer');
+            
+            indicator.className = 'w-4 h-4 rounded-full flex items-center justify-center indicator shrink-0';
+            
+            if (state === 'active') {
+                indicator.classList.add('border-2', 'border-brandAccent');
+                indicator.innerHTML = '<div class="w-1.5 h-1.5 bg-brandAccent rounded-full"></div>';
+                text.className = 'text-white font-medium title flex-1';
+                startTimer(stepId);
+            } else if (state === 'done') {
+                indicator.classList.add('bg-emerald-500', 'border-emerald-500');
+                indicator.innerHTML = '<svg class="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"></path></svg>';
+                text.className = 'text-slate-500 line-through title flex-1';
+                if(timerSpan) {
+                    timerSpan.classList.remove('text-brandAccent');
+                    timerSpan.classList.add('text-slate-500');
+                }
+            } else {
+                indicator.classList.add('border', 'border-slate-600');
+                indicator.innerHTML = '';
+                text.className = 'text-slate-400 title flex-1';
+                if(timerSpan) timerSpan.classList.add('hidden');
+            }
+        };
+
+        // File Selection Logic
+        dropArea.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length) handleFile(e.target.files[0]);
+        });
+
+        // Drag & Drop
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, preventDefaults, false);
+            document.body.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropArea.addEventListener(eventName, () => dropArea.classList.add('border-brandAccent', 'bg-darkPanel/50'));
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropArea.addEventListener(eventName, () => dropArea.classList.remove('border-brandAccent', 'bg-darkPanel/50'));
+        });
+
+        dropArea.addEventListener('drop', (e) => {
+            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+        });
+
+        const getAudioDuration = (file) => {
+            return new Promise((resolve) => {
+                const objectURL = URL.createObjectURL(file);
+                const audio = new Audio(objectURL);
+                audio.addEventListener('loadedmetadata', () => {
+                    resolve(audio.duration);
+                    URL.revokeObjectURL(objectURL);
+                });
+                audio.addEventListener('error', () => {
+                    resolve(60); // fallback to 60s if decode fails in browser
+                });
+            });
+        };
+
+        let countdownTimer = null;
+        const startCountdown = (totalSeconds) => {
+            if (countdownTimer) clearInterval(countdownTimer);
+            let remaining = Math.floor(totalSeconds);
+            const estEl = document.getElementById('estimatedTime');
+            estEl.classList.remove('hidden');
+            
+            const updateUI = () => {
+                if (remaining > 0) {
+                    const m = Math.floor(remaining / 60).toString().padStart(2, '0');
+                    const s = (remaining % 60).toString().padStart(2, '0');
+                    estEl.textContent = `预计剩余: ${m}:${s}`;
+                    remaining--;
+                } else {
+                    estEl.textContent = `预计剩余: 稍等片刻...`;
+                }
+            };
+            updateUI();
+            countdownTimer = setInterval(updateUI, 1000);
+        };
+
+        const stopCountdown = () => {
+            if (countdownTimer) {
+                clearInterval(countdownTimer);
+                countdownTimer = null;
+            }
+            document.getElementById('estimatedTime').classList.add('hidden');
+        };
+
+        async function handleFile(file) {
+            // Check file type briefly
+            if (!file.name.match(/\.(m4a|mp3|wav|ogg)$/i)) {
+                alert('只支持 m4a, mp3, wav 格式的音频。');
+                return;
+            }
+
+            // UI Transition
+            dropZone.classList.add('hidden');
+            progressView.classList.remove('hidden');
+            resultView.classList.add('hidden');
+            exportBtn.classList.add('hidden');
+            statusHeader.textContent = `文件: ${file.name}`;
+            
+            // Reset Steps
+            setStepState('step1', 'pending');
+            setStepState('step2', 'pending');
+            setStepState('step3', 'pending');
+
+            const preset = presetSelect.value;
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('preset', preset);
+
+            try {
+                // Read duration for estimation
+                const duration = await getAudioDuration(file);
+                // Estimation Formula: 
+                // Decode (~2s) + Transcribe (Duration / 8 for M-series Metal) + Ollama (~20s) + 5s buffer
+                const estimatedTotalSeconds = 2 + (duration / 8) + 20 + 5;
+                startCountdown(estimatedTotalSeconds);
+
+                // Step 1: Upload
+                document.getElementById('progressDesc').textContent = '正在上传音频...';
+                const uploadRes = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (!uploadRes.ok) throw new Error('上传失败');
+                const { task_id, filepath } = await uploadRes.json();
+
+                // Step 2: Listen to SSE for processing
+                const evtSource = new EventSource(`/api/process?task_id=${task_id}&filepath=${encodeURIComponent(filepath)}&preset=${encodeURIComponent(preset)}`);
+                
+                evtSource.addEventListener('progress', (e) => {
+                    const data = JSON.parse(e.data);
+                    document.getElementById('progressDesc').textContent = data.message;
+                    
+                    if (data.status === 'decoding') {
+                        setStepState('step1', 'active');
+                    } else if (data.status === 'transcribing') {
+                        setStepState('step1', 'done');
+                        setStepState('step2', 'active');
+                    } else if (data.status === 'summarizing') {
+                        setStepState('step1', 'done');
+                        setStepState('step2', 'done');
+                        setStepState('step3', 'active');
+                    }
+                });
+
+                evtSource.addEventListener('complete', (e) => {
+                    const data = JSON.parse(e.data);
+                    setStepState('step3', 'done');
+                    stopTimer();
+                    stopCountdown();
+                    evtSource.close();
+                    
+                    // Render Results
+                    document.getElementById('rawContent').textContent = data.rawText;
+                    currentMarkdown = data.markdown;
+                    document.getElementById('markdownContent').innerHTML = marked.parse(data.markdown);
+                    
+                    // Transition UI
+                    setTimeout(() => {
+                        progressView.classList.add('hidden');
+                        resultView.classList.remove('hidden');
+                        exportBtn.classList.remove('hidden');
+                        statusHeader.innerHTML = `<span class="text-emerald-400 flex items-center gap-2"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> 处理完成</span>`;
+                    }, 500);
+                });
+
+                evtSource.addEventListener('error', (e) => {
+                    const data = JSON.parse(e.data);
+                    stopTimer();
+                    stopCountdown();
+                    evtSource.close();
+                    alert(`处理发生错误: ${data.message}`);
+                    progressView.classList.add('hidden');
+                    dropZone.classList.remove('hidden');
+                    statusHeader.textContent = '处理中断，请重试';
+                });
+
+            } catch (err) {
+                stopTimer();
+                stopCountdown();
+                alert('系统错误: ' + err.message);
+                progressView.classList.add('hidden');
+                dropZone.classList.remove('hidden');
+            }
+        }
+
+        // Export Markdown
+        exportBtn.addEventListener('click', () => {
+            const blob = new Blob([currentMarkdown], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `AudioNote_${new Date().toISOString().slice(0,10)}.md`;
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        // Model Check Logic
+        async function checkModelStatus() {
+            try {
+                const res = await fetch('/api/model_status');
+                const data = await res.json();
+                if (!data.exists) {
+                    modelSetupModal.classList.remove('hidden');
+                }
+            } catch (err) {
+                console.error("Failed to check model status", err);
+            }
+        }
+        
+        btnDownloadModel.addEventListener('click', async () => {
+            btnDownloadModel.disabled = true;
+            btnSelectModel.disabled = true;
+            btnDownloadModel.classList.add('opacity-50');
+            modelDownloadProgress.classList.remove('hidden');
+            
+            try {
+                const uploadRes = await fetch('/api/download_model', { method: 'POST' });
+                const reader = uploadRes.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value, {stream: true});
+                    const lines = chunk.split('\n');
+                    for (let i = 0; i < lines.length; i++) {
+                        if (lines[i].startsWith('data: ')) {
+                            const dataStr = lines[i].replace('data: ', '');
+                            if (dataStr) {
+                                const data = JSON.parse(dataStr);
+                                if (data.progress !== undefined) {
+                                    modelProgressBar.style.width = `${data.progress}%`;
+                                    modelProgressText.textContent = `${data.progress}%`;
+                                } else if (data.message === "模型下载完成") {
+                                    modelSetupModal.classList.add('hidden');
+                                    alert('模型下载完成！可以开始使用了。');
+                                } else if (data.message && chunk.includes('error')) {
+                                    alert('下载失败: ' + data.message);
+                                    btnDownloadModel.disabled = false;
+                                    btnSelectModel.disabled = false;
+                                    btnDownloadModel.classList.remove('opacity-50');
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                alert('下载错误: ' + err.message);
+                btnDownloadModel.disabled = false;
+                btnSelectModel.disabled = false;
+                btnDownloadModel.classList.remove('opacity-50');
+            }
+        });
+        
+        btnSelectModel.addEventListener('click', async () => {
+            btnDownloadModel.disabled = true;
+            btnSelectModel.disabled = true;
+            btnSelectModel.classList.add('animate-pulse');
+            try {
+                const res = await fetch('/api/select_model', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    modelSetupModal.classList.add('hidden');
+                    alert('配置成功！可以开始使用了。');
+                } else {
+                    if(data.message !== "未选择文件") {
+                        alert('配置失败: ' + data.message);
+                    }
+                }
+            } catch (err) {
+                alert('选择错误: ' + err.message);
+            } finally {
+                btnDownloadModel.disabled = false;
+                btnSelectModel.disabled = false;
+                btnSelectModel.classList.remove('animate-pulse');
+            }
+        });
+        
+        // On Load
+        checkModelStatus();
+    </script>
+</body>
+</html>

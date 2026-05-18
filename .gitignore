@@ -1,0 +1,14 @@
+# Mac OS
+.DS_Store
+
+# Python
+backend/venv/
+backend/__pycache__/
+*.pyc
+
+# Project specific
+backend/uploads/
+
+# Optional: Ignore whisper.cpp completely so you don't push a nested repo
+# (Users cloning your repo should run `git clone https://github.com/ggerganov/whisper.cpp.git backend/whisper.cpp` manually)
+backend/whisper.cpp/
