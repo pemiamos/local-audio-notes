@@ -8,6 +8,8 @@ backend/__pycache__/
 
 # Project specific
 backend/uploads/
+backend/build/
+backend/dist/
 
 # Optional: Ignore whisper.cpp completely so you don't push a nested repo
 # (Users cloning your repo should run `git clone https://github.com/ggerganov/whisper.cpp.git backend/whisper.cpp` manually)
