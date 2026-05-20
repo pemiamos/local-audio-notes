@@ -53,12 +53,43 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # 强制锁定的本地模型（根据用户提供的截图确认为 gemma4:31b）
 LOCKED_MODEL_NAME = "gemma4:31b"
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
+DEFAULT_PRESET = "设计课程录音大纲"
+
+PROCESS_LOCK = threading.Lock()
+UPLOAD_TASKS = {}
+UPLOAD_TASKS_LOCK = threading.Lock()
 
 def format_sse(event, data):
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
-def process_audio_pipeline(task_id, filepath, preset):
+def get_uploaded_file(task_id):
+    with UPLOAD_TASKS_LOCK:
+        task = UPLOAD_TASKS.get(task_id)
+
+    if not task:
+        raise Exception("任务不存在或已过期，请重新上传音频。")
+
+    filepath = task["filepath"]
+    upload_root = os.path.realpath(UPLOAD_FOLDER)
+    real_path = os.path.realpath(filepath)
+    if not real_path.startswith(upload_root + os.sep):
+        raise Exception("上传文件路径非法，请重新上传音频。")
+
+    return real_path, task.get("preset", DEFAULT_PRESET)
+
+def forget_uploaded_file(task_id):
+    with UPLOAD_TASKS_LOCK:
+        UPLOAD_TASKS.pop(task_id, None)
+
+def process_audio_pipeline(task_id):
+    if not PROCESS_LOCK.acquire(blocking=False):
+        yield format_sse("error", {"message": "已有音频正在转录，请等待当前任务完成后再试。"})
+        return
+
+    filepath = None
     try:
+        filepath, preset = get_uploaded_file(task_id)
+
         # 阶段1：音频预处理 (ffmpeg)
         yield format_sse("progress", {"status": "decoding", "message": "解码与预处理音频 (ffmpeg)..."})
         wav_path = os.path.join(UPLOAD_FOLDER, f"{task_id}.wav")
@@ -72,8 +103,8 @@ def process_audio_pipeline(task_id, filepath, preset):
         if result.returncode != 0:
             raise Exception(f"ffmpeg 转换失败: {result.stderr}")
         
-        # 阶段2：极速转录 (whisper.cpp)
-        yield format_sse("progress", {"status": "transcribing", "message": "调用 Metal 加速转录 (whisper.cpp)..."})
+        # 阶段2：稳定转录 (whisper.cpp)
+        yield format_sse("progress", {"status": "transcribing", "message": "调用 whisper.cpp 稳定转录..."})
         whisper_bin = get_resource_path('whisper.cpp/build/bin/whisper-cli')
         model_path = get_model_path()
         
@@ -85,7 +116,12 @@ def process_audio_pipeline(task_id, filepath, preset):
             whisper_bin,
             '-m', model_path,
             '-f', wav_path,
-            '-t', '8', # Use 8 threads to better utilize M2 Ultra/Pro CPUs
+            '-t', '4',
+            '-p', '1',
+            '-bo', '1',
+            '-bs', '1',
+            '-ng',
+            '-nfa',
             '-nt', '-l', 'zh', # no timestamps, output raw text, set language to Chinese
             '--prompt', '以下是普通话的会议记录' # Add initial prompt to reduce hallucinations (like dashes)
         ]
@@ -150,11 +186,13 @@ def process_audio_pipeline(task_id, filepath, preset):
         yield format_sse("error", {"message": str(e)})
     finally:
         # 清理临时文件
-        if os.path.exists(filepath):
+        if filepath and os.path.exists(filepath):
             os.remove(filepath)
         wav_path = os.path.join(UPLOAD_FOLDER, f"{task_id}.wav")
         if os.path.exists(wav_path):
             os.remove(wav_path)
+        forget_uploaded_file(task_id)
+        PROCESS_LOCK.release()
 
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
@@ -164,26 +202,30 @@ def upload_file():
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
         
-    preset = request.form.get('preset', '日常会议速记')
+    preset = request.form.get('preset', DEFAULT_PRESET)
     
     if file:
         filename = secure_filename(file.filename)
         task_id = str(uuid.uuid4())
         filepath = os.path.join(UPLOAD_FOLDER, f"{task_id}_{filename}")
         file.save(filepath)
+
+        with UPLOAD_TASKS_LOCK:
+            UPLOAD_TASKS[task_id] = {
+                "filepath": filepath,
+                "preset": preset
+            }
         
-        return jsonify({"task_id": task_id, "filepath": filepath, "preset": preset})
+        return jsonify({"task_id": task_id, "preset": preset})
 
 @app.route('/api/process', methods=['GET'])
 def process_file():
     task_id = request.args.get('task_id')
-    filepath = request.args.get('filepath')
-    preset = request.args.get('preset')
     
-    if not all([task_id, filepath, preset]):
+    if not task_id:
         return jsonify({"error": "Missing parameters"}), 400
         
-    return Response(process_audio_pipeline(task_id, filepath, preset), mimetype='text/event-stream')
+    return Response(process_audio_pipeline(task_id), mimetype='text/event-stream')
 
 @app.route('/api/model_status', methods=['GET'])
 def model_status():

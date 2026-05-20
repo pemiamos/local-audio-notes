@@ -74,7 +74,7 @@
                 <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider">处理情境预设</label>
                 <select id="presetSelect" class="w-full bg-darkBase border border-darkBorder text-white text-sm rounded-lg focus:ring-brandAccent focus:border-brandAccent block p-2.5 outline-none transition-colors">
                     <option value="日常会议速记">日常会议速记</option>
-                    <option value="设计课程录音大纲">设计课程录音大纲</option>
+                    <option value="设计课程录音大纲" selected>设计课程录音大纲</option>
                 </select>
                 <p class="text-[10px] text-slate-500 mt-1">决定 Ollama 的提示词模板与提炼焦点。</p>
             </div>
@@ -131,7 +131,7 @@
                     </div>
                     <div class="flex items-center gap-3 text-sm" id="step2">
                         <div class="w-4 h-4 rounded-full border border-slate-600 flex items-center justify-center indicator shrink-0"></div>
-                        <span class="text-slate-400 title flex-1">Metal 加速极速转录</span>
+                        <span class="text-slate-400 title flex-1">whisper.cpp 稳定转录</span>
                         <span class="text-xs text-brandAccent font-mono hidden timer">00:00</span>
                     </div>
                     <div class="flex items-center gap-3 text-sm" id="step3">
@@ -225,6 +225,15 @@
         let currentMarkdown = '';
         let currentTimer = null;
         let currentSeconds = 0;
+        let isProcessing = false;
+
+        const setProcessingEnabled = (enabled) => {
+            isProcessing = enabled;
+            fileInput.disabled = enabled;
+            presetSelect.disabled = enabled;
+            dropArea.classList.toggle('pointer-events-none', enabled);
+            dropArea.classList.toggle('opacity-60', enabled);
+        };
 
         const startTimer = (stepId) => {
             if (currentTimer) clearInterval(currentTimer);
@@ -283,7 +292,9 @@
         };
 
         // File Selection Logic
-        dropArea.addEventListener('click', () => fileInput.click());
+        dropArea.addEventListener('click', () => {
+            if (!isProcessing) fileInput.click();
+        });
         fileInput.addEventListener('change', (e) => {
             if (e.target.files.length) handleFile(e.target.files[0]);
         });
@@ -308,7 +319,7 @@
         });
 
         dropArea.addEventListener('drop', (e) => {
-            if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+            if (!isProcessing && e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
         });
 
         const getAudioDuration = (file) => {
@@ -355,6 +366,8 @@
         };
 
         async function handleFile(file) {
+            if (isProcessing) return;
+
             // Check file type briefly
             if (!file.name.match(/\.(m4a|mp3|wav|ogg)$/i)) {
                 alert('只支持 m4a, mp3, wav 格式的音频。');
@@ -367,6 +380,7 @@
             resultView.classList.add('hidden');
             exportBtn.classList.add('hidden');
             statusHeader.textContent = `文件: ${file.name}`;
+            setProcessingEnabled(true);
             
             // Reset Steps
             setStepState('step1', 'pending');
@@ -394,10 +408,10 @@
                 });
                 
                 if (!uploadRes.ok) throw new Error('上传失败');
-                const { task_id, filepath } = await uploadRes.json();
+                const { task_id } = await uploadRes.json();
 
                 // Step 2: Listen to SSE for processing
-                const evtSource = new EventSource(`/api/process?task_id=${task_id}&filepath=${encodeURIComponent(filepath)}&preset=${encodeURIComponent(preset)}`);
+                const evtSource = new EventSource(`/api/process?task_id=${encodeURIComponent(task_id)}`);
                 
                 evtSource.addEventListener('progress', (e) => {
                     const data = JSON.parse(e.data);
@@ -421,6 +435,7 @@
                     stopTimer();
                     stopCountdown();
                     evtSource.close();
+                    setProcessingEnabled(false);
                     
                     // Render Results
                     document.getElementById('rawContent').textContent = data.rawText;
@@ -437,10 +452,11 @@
                 });
 
                 evtSource.addEventListener('error', (e) => {
-                    const data = JSON.parse(e.data);
+                    const data = e.data ? JSON.parse(e.data) : { message: '连接中断，请确认后端服务仍在运行。' };
                     stopTimer();
                     stopCountdown();
                     evtSource.close();
+                    setProcessingEnabled(false);
                     alert(`处理发生错误: ${data.message}`);
                     progressView.classList.add('hidden');
                     dropZone.classList.remove('hidden');
@@ -450,6 +466,7 @@
             } catch (err) {
                 stopTimer();
                 stopCountdown();
+                setProcessingEnabled(false);
                 alert('系统错误: ' + err.message);
                 progressView.classList.add('hidden');
                 dropZone.classList.remove('hidden');
